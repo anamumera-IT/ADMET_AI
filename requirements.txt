@@ -1,0 +1,2 @@
+streamlit
+admet-ai==1.4.0
