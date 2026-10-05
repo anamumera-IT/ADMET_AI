@@ -1,3 +1,8 @@
+import os
+os.environ["TQDM_DISABLE"] = "1"
+
+import io
+import contextlib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,12 +13,23 @@ from admet_ai import ADMETModel
 
 st.title("Chemical Property Predictor")
 
+SUFFIX = "_drugbank_approved_percentile"
+
+
 @st.cache_resource
 def load_model():
-    return ADMETModel()
+    m = ADMETModel()
+    orig = m.predict
+
+    def quiet(*args, **kwargs):
+        with contextlib.redirect_stderr(io.StringIO()):
+            return orig(*args, **kwargs)
+
+    m.predict = quiet
+    return m
+
 
 model = load_model()
-suffix = "_drugbank_approved_percentile"
 
 tab1, tab2 = st.tabs(["Single SMILES", "Upload CSV"])
 
@@ -30,35 +46,40 @@ with tab1:
                 ("BBB_Martins", "BBB", False),
                 ("hERG", "hERG Safe", True),
                 ("ClinTox", "Non-Toxic", True),
-                ("Solubility_AqSolDB" + suffix, "Soluble", False),
+                ("Solubility_AqSolDB" + SUFFIX, "Soluble", False),
                 ("Bioavailability_Ma", "Bioavailable", False),
             ]
             labels, vals = [], []
             for key, label, invert in axes:
                 if key in preds:
-                    v = preds[key] * (100 if "percentile" not in key else 1)
+                    v = float(preds[key]) * (1 if "percentile" in key else 100)
                     vals.append(100 - v if invert else v)
                     labels.append(label)
 
-            angles = np.linspace(0, 2 * np.pi, len(vals), endpoint=False).tolist()
-            fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-            ax.plot(angles + angles[:1], vals + vals[:1], color="red")
-            ax.fill(angles + angles[:1], vals + vals[:1], color="red", alpha=0.25)
-            ax.set_xticks(angles)
-            ax.set_xticklabels(labels)
-            ax.set_ylim(0, 100)
+            if vals:
+                angles = np.linspace(0, 2 * np.pi, len(vals), endpoint=False).tolist()
+                fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+                ax.plot(angles + angles[:1], vals + vals[:1], color="red")
+                ax.fill(angles + angles[:1], vals + vals[:1], color="red", alpha=0.25)
+                ax.set_xticks(angles)
+                ax.set_xticklabels(labels)
+                ax.set_ylim(0, 100)
 
-            c1, c2 = st.columns(2)
-            c1.pyplot(fig)
-            c2.image(Draw.MolToImage(mol, size=(400, 400)))
+                c1, c2 = st.columns(2)
+                c1.pyplot(fig)
+                c2.image(Draw.MolToImage(mol, size=(400, 400)))
+            else:
+                st.image(Draw.MolToImage(mol, size=(400, 400)))
 
             rows = []
             for k, v in preds.items():
-                if not k.endswith(suffix):
+                if not k.endswith(SUFFIX):
                     rows.append({
                         "Property": k,
                         "Value": round(float(v), 3),
-                        "DrugBank percentile (%)": round(float(preds.get(k + suffix, float("nan"))), 1),
+                        "DrugBank percentile (%)": round(
+                            float(preds.get(k + SUFFIX, float("nan"))), 1
+                        ),
                     })
             st.dataframe(pd.DataFrame(rows))
 
