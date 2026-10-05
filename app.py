@@ -1,5 +1,9 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from rdkit import Chem
+from rdkit.Chem import Draw
 from admet_ai import ADMETModel
 
 st.title("Chemical Property Predictor")
@@ -9,14 +13,54 @@ def load_model():
     return ADMETModel()
 
 model = load_model()
+suffix = "_drugbank_approved_percentile"
 
 tab1, tab2 = st.tabs(["Single SMILES", "Upload CSV"])
 
 with tab1:
     smiles = st.text_input("Enter SMILES", "CC(=O)OC1=CC=CC=C1C(=O)O")
     if st.button("Predict", key="single"):
-        preds = model.predict(smiles=smiles)
-        st.dataframe({"Property": list(preds.keys()), "Value": list(preds.values())})
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            st.error("Invalid SMILES")
+        else:
+            preds = model.predict(smiles=smiles)
+
+            axes = [
+                ("BBB_Martins", "BBB", False),
+                ("hERG", "hERG Safe", True),
+                ("ClinTox", "Non-Toxic", True),
+                ("Solubility_AqSolDB" + suffix, "Soluble", False),
+                ("Bioavailability_Ma", "Bioavailable", False),
+            ]
+            labels, vals = [], []
+            for key, label, invert in axes:
+                if key in preds:
+                    v = preds[key] * (100 if "percentile" not in key else 1)
+                    vals.append(100 - v if invert else v)
+                    labels.append(label)
+
+            angles = np.linspace(0, 2 * np.pi, len(vals), endpoint=False).tolist()
+            fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+            ax.plot(angles + angles[:1], vals + vals[:1], color="red")
+            ax.fill(angles + angles[:1], vals + vals[:1], color="red", alpha=0.25)
+            ax.set_xticks(angles)
+            ax.set_xticklabels(labels)
+            ax.set_ylim(0, 100)
+
+            c1, c2 = st.columns(2)
+            c1.pyplot(fig)
+            c2.image(Draw.MolToImage(mol, size=(400, 400)))
+
+            rows = []
+            for k, v in preds.items():
+                if not k.endswith(suffix):
+                    rows.append({
+                        "Property": k,
+                        "Value": round(float(v), 3),
+                        "DrugBank percentile (%)": round(float(preds.get(k + suffix, float("nan"))), 1),
+                    })
+            st.dataframe(pd.DataFrame(rows))
 
 with tab2:
     file = st.file_uploader("Upload a CSV file with a 'smiles' column", type=["csv"])
@@ -30,9 +74,10 @@ with tab2:
             if st.button("Predict all", key="batch"):
                 with st.spinner("Predicting..."):
                     preds = model.predict(smiles=df["smiles"].tolist())
-                    result = pd.concat(
-                        [df.reset_index(drop=True), preds.reset_index(drop=True)], axis=1
-                    )
+                    preds = preds.reset_index(drop=True)
+                    old = df.reset_index(drop=True)
+                    old = old[[c for c in old.columns if c not in preds.columns]]
+                    result = pd.concat([old, preds], axis=1)
                 st.dataframe(result)
                 st.download_button(
                     "Download results (CSV)",
