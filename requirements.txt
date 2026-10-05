@@ -1,3 +1,4 @@
 streamlit
 admet-ai==1.4.0
 numpy<2
+matplotlib
